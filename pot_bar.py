@@ -1,7 +1,8 @@
 # Potentiometer bar on an SSD1306 128x32 - verified working configuration.
 #
 # Turn a B10K pot; the OLED shows the position as a percentage and a filled bar.
-# This is the isolated, confirmed-good setup, kept separate from the vault.
+# When the pot reaches 100%, "ParadoxTransistor" appears and blinks once, then
+# the bar returns. It re-arms after you turn back below full.
 #
 # VERIFIED ON HARDWARE:
 #   full range 0% (raw ~280) to 99% (raw ~65530), smooth, stable at rest.
@@ -26,6 +27,8 @@ import time
 
 I2C_HZ = 100_000
 OVERSAMPLE = 16          # calms the RP2040 ADC noise
+FULL_PCT = 99            # the wiper tops out at ~99% (raw maxes near 65530),
+                         # so treat 99%+ as "full" and fire the message there.
 
 i2c = SoftI2C(sda=Pin(0), scl=Pin(1), freq=I2C_HZ)
 oled = SSD1306_I2C(128, 32, i2c, addr=0x3C)
@@ -39,16 +42,46 @@ def read_pot():
     return total // OVERSAMPLE
 
 
+def draw_bar(pct):
+    oled.fill(0)
+    oled.text("Potentiometer", 0, 0)
+    oled.text("%3d %%" % pct, 0, 11)
+    oled.rect(0, 23, 128, 9, 1)
+    oled.fill_rect(0, 23, pct * 128 // 100, 9, 1)
+    oled.show()
+
+
+def show_name(on):
+    # "ParadoxTransistor" is 17 chars - too wide for 128 px on one line,
+    # so it stacks as two centred lines.
+    oled.fill(0)
+    if on:
+        oled.text("Paradox", (128 - 7 * 8) // 2, 6)
+        oled.text("Transistor", (128 - 10 * 8) // 2, 18)
+    oled.show()
+
+
+def blink_name_once():
+    show_name(True)
+    time.sleep_ms(500)
+    show_name(False)      # off
+    time.sleep_ms(250)
+    show_name(True)       # back on = one blink
+    time.sleep_ms(600)
+
+
+armed = True              # ready to fire the message when we next hit full
+
 try:
     while True:
         raw = read_pot()
         pct = raw * 100 // 65535
-        oled.fill(0)
-        oled.text("Potentiometer", 0, 0)
-        oled.text("%3d %%" % pct, 0, 11)
-        oled.rect(0, 23, 128, 9, 1)                 # bar outline
-        oled.fill_rect(0, 23, pct * 128 // 100, 9, 1)  # fill
-        oled.show()
+        if pct >= FULL_PCT and armed:
+            blink_name_once()
+            armed = False          # don't repeat until we leave full
+        elif pct < FULL_PCT:
+            armed = True           # re-arm once turned back down
+        draw_bar(pct)
         time.sleep_ms(70)
 except KeyboardInterrupt:
     oled.fill(0)
